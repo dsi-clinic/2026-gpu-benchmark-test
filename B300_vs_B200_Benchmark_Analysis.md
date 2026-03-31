@@ -46,6 +46,12 @@ This bypasses `torch.nn.functional.scaled_dot_product_attention()` (SDPA), which
 
 **Recommended fix:** Replace the three manual operations with `F.scaled_dot_product_attention(Q, K, V)`.
 
+**Sources:**
+- [PyTorch SDPA API reference](https://pytorch.org/docs/stable/generated/torch.nn.functional.scaled_dot_product_attention.html) -- documents backend auto-selection (FlashAttention, memory-efficient, cuDNN attention)
+- [Implementing High-Performance Transformers with SDPA (PyTorch tutorial)](https://pytorch.org/tutorials/intermediate/scaled_dot_product_attention_tutorial.html) -- benchmarks comparing fused vs manual attention backends
+- [Accelerated PyTorch 2 Transformers (PyTorch blog)](https://pytorch.org/blog/accelerated-pytorch-2/) -- performance comparisons of SDPA vs manual implementation
+- [PyTorch 2.2: FlashAttention-v2 integration (PyTorch blog)](https://pytorch.org/blog/pytorch2-2/) -- reports ~2x speedup and 50-73% theoretical max FLOPS on A100
+
 ---
 
 ### Issue 2: No `torch.compile()` or JIT Compilation
@@ -63,6 +69,12 @@ This bypasses `torch.nn.functional.scaled_dot_product_attention()` (SDPA), which
 
 **Recommended fix:** Add a `--compile` CLI flag; wrap benchmark functions with `torch.compile(mode="max-autotune")`.
 
+**Sources:**
+- [torch.compile API reference](https://docs.pytorch.org/docs/stable/generated/torch.compile.html) -- documents `mode="max-autotune"` which "leverages Triton-based matrix multiplications and convolutions on GPU" and enables CUDA graphs
+- [Introduction to torch.compile (PyTorch tutorial)](https://docs.pytorch.org/tutorials/intermediate/torch_compile_tutorial.html) -- end-to-end examples showing performance gains
+- [CUDA Blackwell Tuning Guide (NVIDIA)](https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html) -- Blackwell-specific optimization guidance
+- [Accelerating PyTorch with CUDA Graphs (PyTorch blog)](https://pytorch.org/blog/accelerating-pytorch-with-cuda-graphs/) -- explains CUDA graph capture benefits for reducing kernel launch overhead
+
 ---
 
 ### Issue 3: No cuDNN Benchmark Mode
@@ -76,6 +88,11 @@ This bypasses `torch.nn.functional.scaled_dot_product_attention()` (SDPA), which
 **Likely impact:** Primary explanation for the massive ResNet-50 gap (B300 at 4,444 FPS vs B200 at 43,370 FPS = **-90% drop**). A 10x regression in convolution-dominated workloads is consistent with selecting a pathologically bad algorithm.
 
 **Recommended fix:** Add `torch.backends.cudnn.benchmark = True` in `__init__()`.
+
+**Sources:**
+- [torch.backends (PyTorch docs)](https://docs.pytorch.org/docs/stable/backends.html) -- defines `torch.backends.cudnn.benchmark`: "if True, causes cuDNN to benchmark multiple convolution algorithms and select the fastest"
+- [Performance Tuning Guide (PyTorch tutorial)](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) -- states: "autotuning is an efficient method to ensure the selection of the ideal algorithm for each convolution in the network"
+- [Optimizing Convolutional Layers (NVIDIA Deep Learning Performance Guide)](https://docs.nvidia.com/deeplearning/performance/dl-performance-convolutional/index.html) -- explains cuDNN algorithm selection and per-architecture optimization
 
 ---
 
@@ -97,6 +114,13 @@ This inflates reported TFLOPS by `world_size`x when all GPUs contribute. When on
 
 **Recommended fix:** Fix FLOPS to use `local_batch` instead of `M`. Investigate NCCL topology on B300 nodes (`nvidia-smi topo -m`, `NCCL_DEBUG=INFO`).
 
+**Sources:**
+- [DistributedDataParallel API reference (PyTorch docs)](https://docs.pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html) -- documents `device_ids` parameter behavior
+- [DDP Design Notes (PyTorch docs)](https://docs.pytorch.org/docs/stable/notes/ddp.html) -- explains device placement and gradient synchronization
+- [NCCL Environment Variables (NVIDIA docs)](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html) -- documents `NCCL_DEBUG`, `NCCL_TOPO_FILE`, `NCCL_TOPO_DUMP_FILE`, and other topology-related variables
+- [NCCL Tuning for GB200 NVL Multi-Node (NVIDIA docs)](https://docs.nvidia.com/multi-node-nvlink-systems/multi-node-tuning-guide/nccl.html) -- Blackwell-specific NCCL configuration guidance
+- [Understanding GB200 System Topology (NVIDIA docs)](https://docs.nvidia.com/multi-node-nvlink-systems/multi-node-tuning-guide/system.html) -- NVLink topology for Blackwell systems
+
 ---
 
 ### Issue 5: Device-to-Device Copy Measures HBM Bandwidth, Not NVLink -- with Miscalibrated Expected Values
@@ -117,6 +141,11 @@ The measured values (B200: 2937 GB/s, B300: 1547 GB/s) are both flagged as "BELO
 
 **Recommended fix:** Correct expected D2D values to ~2500-3500 GB/s (realistic single-copy HBM bandwidth). Alternatively, rename the test to clarify it measures HBM copy bandwidth, not NVLink.
 
+**Sources:**
+- [NVIDIA Blackwell Architecture Datasheet](https://resources.nvidia.com/en-us-blackwell-architecture/datasheet) -- B200/B300 HBM3e spec: 8 TB/s memory bandwidth (theoretical bidirectional peak)
+- [CUDA Demo Suite -- bandwidthTest (NVIDIA docs)](https://docs.nvidia.com/cuda/demo-suite/index.html) -- documents device-to-device copy bandwidth measurement methodology
+- [CUDA C++ Best Practices Guide (NVIDIA docs)](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html) -- discusses memory bandwidth measurement and optimization
+
 ---
 
 ## Secondary Issues
@@ -127,6 +156,10 @@ The measured values (B200: 2937 GB/s, B300: 1547 GB/s) are both flagged as "BELO
 
 Rank 0 (lines 711-712, 719-720) uses `dist.send()` / `dist.recv()` and rank 1 (lines 754-755, 761-762) uses the mirror pattern. These are blocking operations that serialize the bidirectional transfer. Using `dist.isend()` / `dist.irecv()` (async) would allow simultaneous bidirectional transfer, potentially doubling measured bandwidth. On B300 with potentially different NVLink topology, the serialization may cause more stalls due to different link arbitration behavior.
 
+**Sources:**
+- [Distributed Communication Package (PyTorch docs)](https://docs.pytorch.org/docs/stable/distributed.html) -- documents `isend()`, `irecv()`, and `batch_isend_irecv()` async alternatives
+- [Writing Distributed Applications with PyTorch (tutorial)](https://docs.pytorch.org/tutorials/intermediate/dist_tuto.html) -- examples of blocking vs non-blocking P2P communication
+
 ---
 
 ### Issue 7: No Warmup Between Architecture-Sensitive Tests
@@ -134,6 +167,9 @@ Rank 0 (lines 711-712, 719-720) uses `dist.send()` / `dist.recv()` and rank 1 (l
 **Location:** `run_full_suite()` method, lines 358-515 of `gpu_benchmark.py` in repo `rcc-uchicago/nodes-testing-tools`
 
 The benchmark calls `self.warmup()` once at line 367, then runs all test categories (GEMM, Conv2D, Attention, Memory, Multi-GPU) without intermediate warmup. Individual tests have their own small warmup loops (e.g., 10 iterations for matmul at line 81, 5 for attention at lines 186-190), but these may be insufficient for B300's newer architecture which may have different JIT compilation and kernel caching behavior.
+
+**Sources:**
+- [Performance Tuning Guide (PyTorch tutorial)](https://docs.pytorch.org/tutorials/recipes/recipes/tuning_guide.html) -- discusses warmup runs before measurement, particularly for JIT-compiled models and cuDNN autotuning
 
 ---
 
@@ -152,6 +188,11 @@ The B300 expected ranges appear to be derived from B200 values with a ~7-8% upli
 
 The uniform ~8% scaling suggests copy-paste adjustment rather than empirical characterization. This means even "passing" results on B300 may not reflect actual silicon capabilities.
 
+**Sources:**
+- [NVIDIA Blackwell Architecture Datasheet](https://resources.nvidia.com/en-us-blackwell-architecture/datasheet) -- official B200 specs for comparison
+- [NVIDIA GB300 NVL72 product page](https://www.nvidia.com/en-us/data-center/gb300-nvl72/) -- B300 specs
+- [Inside NVIDIA Blackwell Ultra (NVIDIA developer blog)](https://developer.nvidia.com/blog/inside-nvidia-blackwell-ultra-the-chip-powering-the-ai-factory-era/) -- B300 architecture details and performance claims
+
 ---
 
 ### Issue 9: vLLM Not Optimized for Blackwell
@@ -165,6 +206,10 @@ The presentation explicitly notes: "the employed open-source inference software 
 ### Issue 10: CUDA/Driver Maturity
 
 B300 is newer silicon. The CUDA toolkit, cuBLAS, cuDNN, and NCCL libraries may not yet have B300-specific optimizations. The B200 has had more time for these optimizations to be developed and deployed. This is an environmental factor that amplifies the benchmark code issues above.
+
+**Sources:**
+- [CUDA Blackwell Tuning Guide (NVIDIA docs)](https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html) -- Blackwell-specific CUDA optimization guidance
+- [NCCL Environment Variables (NVIDIA docs)](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html) -- NCCL configuration for newer architectures
 
 ---
 
