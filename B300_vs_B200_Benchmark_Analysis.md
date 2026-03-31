@@ -34,6 +34,7 @@ However, **close examination of the data reveals a nuanced picture**. The B300 d
 | P2P Transfer 100 MB | 452.20 GB/s | 357.76 GB/s | **-21%** | Slide 5 (Run A) |
 | GEMM BF16 small 4096 | 1504 TFLOPS | 782 TFLOPS | **-48%** | Slides 6-7 (Run B) |
 | ResNet-50 (1 GPU) | 15,081 FPS | 4,444 FPS | **-70%** | Slide 9 |
+| ViT-Large (4 GPU) | 13,365 FPS | 11,394 FPS | **-15%** | Slide 9 |
 | LAMMPS (all particle counts) | -- | -- | **-8% to -19%** | Slide 8 |
 
 ### Where B300 Matches or Exceeds B200
@@ -276,7 +277,9 @@ These do not explain the B300 vs B200 delta but affect the quality and accuracy 
 
 **Source:** Presentation slide 12 (DSAI-bench-16Mar2026.pdf)
 
-The presentation explicitly notes: "the employed open-source inference software (like vLLM) has not yet been optimized for the Blackwell's new hardware-level Transformer Engines." This affects LLM inference results at FP8/FP4 precision. Notably, BF16 inference performance is normal (B300 matches or slightly exceeds B200), confirming this is a software optimization issue for new precision formats, not a hardware defect.
+The presentation explicitly notes: "the employed open-source inference software (like vLLM) has not yet been optimized for the Blackwell's new hardware-level Transformer Engines." This affects LLM inference results at FP8/FP4 precision. Slide 12 shows that for the 8B model at 1 GPU, FP8 and FP4 performance drops sharply on B300 (FP8≈3,383 TPS, FP4≈3,362 TPS) compared to BF16 (~8,158 TPS), while B200 maintains higher FP8/FP4 throughput. The slide also notes: "There is a drop in FP8/FP4 performance for the 1 GPU runs." At 4 GPUs, both B200 and B300 show similar FP8/FP4 levels (~9,400-9,700 TPS). BF16 inference performance is normal (B300 matches or slightly exceeds B200), confirming this is a software optimization issue for new precision formats, not a hardware defect.
+
+**Note:** Slide 12's BF16 bar labels appear to swap B200/B300 values compared to slide 10 (B200 shows 8,158 on slide 12 but 7,632 on slide 10). This may be a labeling error in the presentation; we use slide 10 BF16 values as authoritative since that slide is dedicated to BF16 results.
 
 ---
 
@@ -348,7 +351,7 @@ Run the fixed benchmark code on both B200 and B300, then compare. Expected outco
 | LAMMPS -8% to -19% (all sizes) | Issue 11 (CUDA maturity for HPC kernels) | **Medium** | B300 trails B200 at all particle counts; presentation note "performs surprisingly well with FP64" refers to B300 vs H200, not vs B200 |
 | Conv2D -1% | No B300-specific issue | **High** | Essentially identical; cuDNN benchmark would help both GPUs |
 | P2P 500MB: +3% (Run A) / -22% (Run B) | System variability + possibly Issue 11 | **Low** | Contradictory results; NVLink hardware likely fine but NCCL config unstable |
-| ViT-Large +6% | No issue -- B300 performs correctly | **High** | Optimized attention-based workload works as expected |
+| ViT-Large: +6% (1 GPU), -15% (4 GPU), +5% (8 GPU) | Issue 11 at 4 GPU; fine at 1 and 8 GPU | **Medium** | 4 GPU regression not explained by any identified code issue; may be multi-GPU scaling/NCCL related |
 | LLM BF16 +7% | No issue -- B300 performs correctly | **High** | Well-optimized inference stack works as expected |
 
 ---
